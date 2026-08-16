@@ -461,28 +461,57 @@ function hydrateAutoCover(img, book) {
 
 async function findCover(img, book, key) {
   try {
-    const q = `intitle:${book.title} inauthor:${book.author}`;
-    const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5`;
-    const response = await fetch(url);
-    if (!response.ok) return;
-    const data = await response.json();
-    const items = data.items || [];
+    const queries = [
+      `intitle:${book.title}`,
+      `${book.title} ${book.author}`,
+      book.title
+    ];
 
-    let image = null;
-    for (const item of items) {
-      const links = item.volumeInfo && item.volumeInfo.imageLinks;
-      image = links && (links.thumbnail || links.smallThumbnail);
-      if (image) break;
+    for (const query of queries) {
+      const url =
+        `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10`;
+
+      const response = await fetch(url);
+
+      if (!response.ok) continue;
+
+      const data = await response.json();
+
+      for (const item of data.items || []) {
+        const links = item.volumeInfo?.imageLinks;
+
+        if (!links) continue;
+
+        let image =
+          links.extraLarge ||
+          links.large ||
+          links.medium ||
+          links.small ||
+          links.thumbnail ||
+          links.smallThumbnail;
+
+        if (!image) continue;
+
+        image = image
+          .replace("http://", "https://")
+          .replace("&edge=curl", "");
+
+        state.coverCache[key] = image;
+        localStorage.setItem(
+          "readingTrackerCoverCache",
+          JSON.stringify(state.coverCache)
+        );
+
+        img.src = image;
+        return;
+      }
     }
 
-    if (image) {
-      image = image.replace("http://", "https://").replace("&edge=curl", "");
-      state.coverCache[key] = image;
-      localStorage.setItem("readingTrackerCoverCache", JSON.stringify(state.coverCache));
-      img.src = image;
-    }
-  } catch (e) {
-    console.warn("Обложка не найдена:", book.title);
+    img.src = FALLBACK;
+
+  } catch (error) {
+    console.error("Ошибка поиска обложки:", book.title, error);
+    img.src = FALLBACK;
   }
 }
 
