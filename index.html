@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reading Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-icon">◫</span>
+      <span>Reading Tracker</span>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-page="home"><span>⌂</span>Главная</button>
+      <button class="nav-item" data-page="library"><span>▥</span>Библиотека</button>
+      <button class="nav-item" data-page="series"><span>◇</span>Серии</button>
+      <button class="nav-item" data-page="stats"><span>▥</span>Статистика</button>
+    </nav>
+
+    <div class="year-goal">
+      <div class="muted">Цель на год</div>
+      <strong>40</strong>
+      <div class="goal-bar"><span></span></div>
+    </div>
+  </aside>
+
+  <main class="content">
+    <section id="home" class="page active">
+      <header class="page-header">
+        <div>
+          <h1>Моё чтение</h1>
+          <p>Личная библиотека и прогресс чтения</p>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" id="reloadBtn" title="Перечитать books.xlsx">↻</button>
+        </div>
+      </header>
+
+      <div id="errorBox" class="error hidden"></div>
+
+      <div class="stats-grid">
+        <article class="stat-card"><span class="stat-icon">▣</span><div><strong id="totalCount">0</strong><small>книг в библиотеке</small></div></article>
+        <article class="stat-card"><span class="stat-icon">✓</span><div><strong id="finishedCount">0</strong><small>прочитано</small></div></article>
+        <article class="stat-card"><span class="stat-icon">◉</span><div><strong id="readingCount">0</strong><small>читаю сейчас</small></div></article>
+        <article class="stat-card"><span class="stat-icon">Ⅱ</span><div><strong id="pausedCount">0</strong><small>на паузе</small></div></article>
+        <article class="stat-card"><span class="stat-icon">×</span><div><strong id="droppedCount">0</strong><small>брошено</small></div></article>
+        <article class="stat-card"><span class="stat-icon">★</span><div><strong id="avgRating">—</strong><small>средняя оценка</small></div></article>
+      </div>
+
+      <div class="section-title">
+        <h2>Сейчас читаю</h2>
+        <button class="text-btn" data-go="library">Посмотреть все</button>
+      </div>
+      <div id="readingNow" class="horizontal-books"></div>
+
+      <div class="section-title">
+        <h2>Последние завершённые</h2>
+        <button class="text-btn" data-go="library">Посмотреть все</button>
+      </div>
+      <div id="recentFinished" class="compact-grid"></div>
+    </section>
+
+    <section id="library" class="page">
+      <header class="page-header library-head">
+        <div>
+          <h1>Библиотека</h1>
+          <p><span id="libraryCount">0</span> книг</p>
+        </div>
+        <label class="search">
+          <span>⌕</span>
+          <input id="searchInput" type="search" placeholder="Поиск по книгам и авторам...">
+        </label>
+      </header>
+
+      <div class="status-filters" id="statusFilters">
+        <button class="chip active" data-status="Все">Все</button>
+        <button class="chip" data-status="Чтение">Читаю</button>
+        <button class="chip" data-status="Я все прочитал!">Прочитано</button>
+        <button class="chip" data-status="Бросил читать">Брошено</button>
+        <button class="chip" data-status="Пауза">На паузе</button>
+        <button class="chip" data-status="К прочтению">К прочтению</button>
+      </div>
+
+      <div class="secondary-filters">
+        <select id="formatFilter"><option value="">Все форматы</option></select>
+        <select id="seriesFilter"><option value="">Все серии</option></select>
+        <select id="ratingFilter">
+          <option value="">Любая оценка</option>
+          <option value="5">5.0</option>
+          <option value="4">4.0+</option>
+          <option value="3">3.0+</option>
+          <option value="2">2.0+</option>
+          <option value="1">1.0+</option>
+        </select>
+      </div>
+
+      <div id="libraryGrid" class="library-grid"></div>
+      <div class="load-more-wrap">
+        <button id="loadMoreBtn" class="primary-btn hidden">Показать ещё</button>
+      </div>
+    </section>
+
+    <section id="series" class="page">
+      <header class="page-header"><div><h1>Серии</h1><p>Группировка по столбцу «Серия»</p></div></header>
+      <div id="seriesGrid" class="series-grid"></div>
+    </section>
+
+    
+    <section id="stats" class="page">
+      <header class="page-header">
+        <div>
+          <h1>Статистика</h1>
+          <p>Фильтруй данные и смотри, как меняется картина чтения</p>
+        </div>
+      </header>
+
+      <div class="stats-filter-panel">
+        <div class="stats-filter-group">
+          <label>Год
+            <select id="statsYear"><option value="">Всё время</option></select>
+          </label>
+          <label>Месяц
+            <select id="statsMonth">
+              <option value="">Все месяцы</option>
+              <option value="0">Январь</option>
+              <option value="1">Февраль</option>
+              <option value="2">Март</option>
+              <option value="3">Апрель</option>
+              <option value="4">Май</option>
+              <option value="5">Июнь</option>
+              <option value="6">Июль</option>
+              <option value="7">Август</option>
+              <option value="8">Сентябрь</option>
+              <option value="9">Октябрь</option>
+              <option value="10">Ноябрь</option>
+              <option value="11">Декабрь</option>
+            </select>
+          </label>
+          <label>Формат
+            <select id="statsFormat"><option value="">Все форматы</option></select>
+          </label>
+          <label>Статус
+            <select id="statsStatus">
+              <option value="">Все статусы</option>
+              <option value="Я все прочитал!">Прочитано</option>
+              <option value="Бросил читать">Брошено</option>
+              <option value="Чтение">Читаю</option>
+              <option value="Пауза">На паузе</option>
+              <option value="К прочтению">К прочтению</option>
+            </select>
+          </label>
+          <label>Серия
+            <select id="statsSeries"><option value="">Все серии</option></select>
+          </label>
+          <label>Оценка
+            <select id="statsRating">
+              <option value="">Любая оценка</option>
+              <option value="5">5.0</option>
+              <option value="4">4.0+</option>
+              <option value="3">3.0+</option>
+              <option value="2">2.0+</option>
+              <option value="1">1.0+</option>
+            </select>
+          </label>
+        </div>
+        <button id="resetStatsFilters" class="secondary-btn">Сбросить фильтры</button>
+      </div>
+
+      <div id="statsPage" class="stats-page"></div>
+
+      <div class="charts-grid">
+        <article class="chart-card">
+          <div class="chart-head">
+            <h2>Книги по месяцам</h2>
+            <span>по дате завершения, иначе по дате начала</span>
+          </div>
+          <div id="monthChart" class="bar-chart"></div>
+        </article>
+
+        <article class="chart-card">
+          <div class="chart-head">
+            <h2>По статусам</h2>
+            <span>распределение выбранных книг</span>
+          </div>
+          <div id="statusChart" class="bar-chart"></div>
+        </article>
+
+        <article class="chart-card">
+          <div class="chart-head">
+            <h2>Оценки</h2>
+            <span>учитываются книги с оценкой выше 0</span>
+          </div>
+          <div id="ratingChart" class="bar-chart"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <template id="bookCardTemplate">
+    <article class="book-card">
+      <div class="cover-wrap">
+        <img class="cover" alt="">
+        <span class="status-badge"></span>
+      </div>
+      <h3 class="book-title"></h3>
+      <p class="book-author"></p>
+      <div class="book-meta"></div>
+      <div class="rating"></div>
+    </article>
+  </template>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
