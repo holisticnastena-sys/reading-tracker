@@ -7,6 +7,14 @@ const state = {
 
 const FALLBACK = "assets/no-cover.svg";
 
+// Очередь для поиска обложек.
+// Google Books начинает отвечать 429, если отправлять много запросов одновременно.
+const coverQueue = [];
+const coverJobs = new Map();
+let coverQueueRunning = false;
+const COVER_REQUEST_DELAY = 1500; // 1 запрос примерно раз в 1.5 секунды
+
+
 document.addEventListener("DOMContentLoaded", () => {
   bindNavigation();
   bindFilters();
@@ -425,94 +433,228 @@ function getProgress(book) {
 async function hydrateCover(img, book) {
   img.loading = "lazy";
 
+  // 1. Сначала используем ссылку из Excel.
   if (book.cover) {
     img.src = book.cover;
+
     img.onerror = () => {
       img.onerror = null;
       img.src = FALLBACK;
       hydrateAutoCover(img, book);
     };
+
     return;
   }
 
+  // 2. Если ссылки в Excel нет — ищем автоматически.
   hydrateAutoCover(img, book);
 }
 
 function hydrateAutoCover(img, book) {
   const key = `${book.title}__${book.author}`.toLowerCase();
 
+  // Если обложка уже найдена ранее — используем кэш.
   if (state.coverCache[key]) {
     img.src = state.coverCache[key];
+
+    img.onerror = () => {
+      img.onerror = null;
+
+      // Если сохранённая ссылка оказалась битой — удаляем её из кэша
+      // и запускаем поиск заново.
+      delete state.coverCache[key];
+      localStorage.setItem(
+        "readingTrackerCoverCache",
+        JSON.stringify(state.coverCache)
+      );
+
+      img.src = FALLBACK;
+      queueCoverSearch(img, book, key);
+    };
+
     return;
   }
 
+  // Не ищем обложки для карточек, которые ещё далеко за пределами экрана.
   if (!isNearViewport(img)) {
     const observer = new IntersectionObserver(entries => {
       if (entries.some(e => e.isIntersecting)) {
         observer.disconnect();
-        findCover(img, book, key);
+        queueCoverSearch(img, book, key);
       }
-    }, { rootMargin: "500px" });
+    }, { rootMargin: "350px" });
+
     observer.observe(img);
-  } else {
-    findCover(img, book, key);
+    return;
+  }
+
+  queueCoverSearch(img, book, key);
+}
+
+function queueCoverSearch(img, book, key) {
+  // Одна и та же книга может одновременно находиться на Главной
+  // и в Библиотеке. Не отправляем для неё несколько одинаковых запросов.
+  if (coverJobs.has(key)) {
+    coverJobs.get(key).images.push(img);
+    return;
+  }
+
+  coverJobs.set(key, {
+    book,
+    images: [img]
+  });
+
+  coverQueue.push(key);
+  processCoverQueue();
+}
+
+async function processCoverQueue() {
+  if (coverQueueRunning) return;
+
+  coverQueueRunning = true;
+
+  while (coverQueue.length > 0) {
+    const key = coverQueue.shift();
+    const job = coverJobs.get(key);
+
+    if (!job) continue;
+
+    const imageUrl = await findCover(job.book, key);
+
+    if (imageUrl) {
+      job.images.forEach(img => {
+        img.onerror = () => {
+          img.onerror = null;
+          img.src = FALLBACK;
+        };
+        img.src = imageUrl;
+      });
+    } else {
+      job.images.forEach(img => {
+        img.onerror = null;
+        img.src = FALLBACK;
+      });
+    }
+
+    coverJobs.delete(key);
+
+    // Важно: не бомбим API запросами.
+    await sleep(COVER_REQUEST_DELAY);
+  }
+
+  coverQueueRunning = false;
+}
+
+async function findCover(book, key) {
+  // Пробуем несколько вариантов запроса.
+  const queries = [
+    `intitle:${book.title} inauthor:${book.author}`,
+    `${book.title} ${book.author}`,
+    book.title
+  ];
+
+  for (const q of queries) {
+    const result = await requestGoogleBooks(q, book.title);
+
+    // 429 уже обрабатывается внутри requestGoogleBooks().
+    if (!result) continue;
+
+    const items = result.items || [];
+
+    for (const item of items) {
+      const links = item.volumeInfo && item.volumeInfo.imageLinks;
+      if (!links) continue;
+
+      let image =
+        links.extraLarge ||
+        links.large ||
+        links.medium ||
+        links.small ||
+        links.thumbnail ||
+        links.smallThumbnail;
+
+      if (!image) continue;
+
+      image = image
+        .replace("http://", "https://")
+        .replace("&edge=curl", "");
+
+      const works = await testImage(image);
+
+      if (!works) continue;
+
+      state.coverCache[key] = image;
+      localStorage.setItem(
+        "readingTrackerCoverCache",
+        JSON.stringify(state.coverCache)
+      );
+
+      return image;
+    }
+  }
+
+  console.warn("Обложка не найдена:", book.title);
+  return null;
+}
+
+async function requestGoogleBooks(query, title) {
+  const url =
+    `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=5`;
+
+  try {
+    let response = await fetch(url);
+
+    // Если Google ограничил запросы, ждём и повторяем один раз.
+    if (response.status === 429) {
+      console.warn(
+        `Google Books ограничил запросы. Повтор через 6 секунд: ${title}`
+      );
+
+      await sleep(6000);
+      response = await fetch(url);
+    }
+
+    if (!response.ok) {
+      console.warn(
+        `Google Books: HTTP ${response.status} для книги "${title}"`
+      );
+      return null;
+    }
+
+    return await response.json();
+
+  } catch (error) {
+    console.warn("Ошибка Google Books:", title, error);
+    return null;
   }
 }
 
-async function findCover(img, book, key) {
-  try {
-    const queries = [
-      `intitle:${book.title}`,
-      `${book.title} ${book.author}`,
-      book.title
-    ];
+function testImage(url) {
+  return new Promise(resolve => {
+    const test = new Image();
 
-    for (const query of queries) {
-      const url =
-        `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10`;
+    const timer = setTimeout(() => {
+      test.onload = null;
+      test.onerror = null;
+      resolve(false);
+    }, 8000);
 
-      const response = await fetch(url);
+    test.onload = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
 
-      if (!response.ok) continue;
+    test.onerror = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
 
-      const data = await response.json();
+    test.src = url;
+  });
+}
 
-      for (const item of data.items || []) {
-        const links = item.volumeInfo?.imageLinks;
-
-        if (!links) continue;
-
-        let image =
-          links.extraLarge ||
-          links.large ||
-          links.medium ||
-          links.small ||
-          links.thumbnail ||
-          links.smallThumbnail;
-
-        if (!image) continue;
-
-        image = image
-          .replace("http://", "https://")
-          .replace("&edge=curl", "");
-
-        state.coverCache[key] = image;
-        localStorage.setItem(
-          "readingTrackerCoverCache",
-          JSON.stringify(state.coverCache)
-        );
-
-        img.src = image;
-        return;
-      }
-    }
-
-    img.src = FALLBACK;
-
-  } catch (error) {
-    console.error("Ошибка поиска обложки:", book.title, error);
-    img.src = FALLBACK;
-  }
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function isNearViewport(el) {
